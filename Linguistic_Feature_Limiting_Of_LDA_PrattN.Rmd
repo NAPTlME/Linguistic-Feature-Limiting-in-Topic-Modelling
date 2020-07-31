@@ -1,0 +1,416 @@
+---
+title: "An Exploration of Linguistic Feature Limiting in LDA"
+author: "Nathan Pratt"
+date: "July 28, 2020"
+output:
+  pdf_document:
+    toc: yes
+    toc_depth: '3'
+    latex_engine: xelatex
+    df_print: kable
+  html_document:
+    toc: yes
+    toc_depth: 2
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+# set working directory
+
+library(dplyr)
+library(ggplot2)
+library(tidyr)
+library(NLP)
+library(tm)
+library(openNLP)
+library(stringr)
+library(topicmodels)
+
+
+
+# set file locations
+nipsPapersFile = "~/Github/Linguistic-Feature-Limiting-in-Topic-Modelling/Data/papers.rds"
+amazonReviewFile = "~/Github/Linguistic-Feature-Limiting-in-Topic-Modelling/Data/amazonReviews.rds"
+```
+
+```{r import data, echo = F}
+#### Amazon Reviews ####
+amazonReviewDf = readRDS(amazonReviewFile)
+
+amazonReviewDf = amazonReviewDf %>%
+  mutate(id = row_number()) %>%
+  select(id, product, comments)
+
+#### NIPS publications ####
+
+nipsPapersDf = readRDS(nipsPapersFile)
+nipsPapersDf = nipsPapersDf %>% 
+  mutate(id = row_number()) %>%
+  select(id, title, paper_text)
+```
+
+```{r linguistic tagging functions, echo = F}
+
+testSent = "One aim of the Department of Comparative and Developmental Psychology is the investigation of the evolution of different cognitive processes."
+testSent = "The kids put some frogs in the pool."
+testSent = "They may be bringing about a peaceful solution in East Timor."
+
+sent_token_annotator = Maxent_Sent_Token_Annotator()
+word_token_annotator = Maxent_Word_Token_Annotator()
+posAnnotator = Maxent_POS_Tag_Annotator()
+
+getPos = function(s, sentAnnotator, wordAnnotator, posAnnotator){
+  s1a = annotate(s, list(sentAnnotator, wordAnnotator))
+  s1 = annotate(s, posAnnotator, s1a)
+  
+  word_subset = subset(s1, type=='word')
+  tags = sapply(word_subset$features , '[[', "POS")
+  words = sapply(word_subset, function(x) substr(s, x$start, x$end))
+  return(data.frame(words, tags))
+}
+
+tmp = getPos(testSent, sent_token_annotator, word_token_annotator, posAnnotator)
+
+tmp = getPos(amazonReviewDf$comments[2], sent_token_annotator, word_token_annotator, posAnnotator)
+
+### test for getting out specific phrasals
+### not going to properly build out trees, but find most relevent phrases and filter from there.
+# split by pos == "." (punctuation)
+tagInd = which(tmp$tags == ".")
+tagInd = tagInd[tagInd != 1 & tagInd != nrow(tmp)] # discount punctuation at beginning and end of text to allow splitting
+start = c(1, tagInd+1)
+end = c(tagInd, nrow(tmp))
+
+sents = lapply(1:length(start), function(i){
+  return(tmp[start[i]:end[i],])
+})
+
+
+```
+
+```{r Traditional Prep}
+
+GetDtm = function(x, textMineRVersion = F){
+  txt = as.vector(x)
+  corp = Corpus(VectorSource(txt))
+  corp = tm_map(corp, removeNumbers)
+  corp = tm_map(corp, function(y) removeWords(y,stopwords()))
+  corp = tm_map(corp, tolower)
+  corp = tm_map(corp, removePunctuation)
+  corp = tm_map(corp, stripWhitespace)
+  corp = tm_map(corp, textstem::lemmatize_strings)
+  if (textMineRVersion){
+    txtVec = sapply(1:length(corp), function(i) corp[[i]]$content)
+    return(textmineR::CreateDtm(doc_vec = txtVec,
+                                doc_names = 1:length(txtVec),
+                                ngram_window = c(1,1)))
+  }
+  dtm = DocumentTermMatrix(corp)
+  if (any(apply(dtm, 1, sum) == 0)){
+    # get documents that do not contain any information after the above removals and set text to "(Blank)" to avoid errors, then rerun prep
+    x[apply(dtm, 1, sum) == 0] = "(Blank)"
+    return(GetDtm(x))
+  }
+  return(dtm)
+}
+
+FilterTextByPos = function(x, tags = c("JJ", "NN", "NNS", "NNP", "NNPS")){ # defaulting to filtering on Adjectives and nouns
+  txt = as.vector(x)
+  filteredText = sapply(txt, function(y) {
+    df = getPos(y, sent_token_annotator, word_token_annotator, posAnnotator)
+    return(paste0(df$words[df$tags %in% tags], collapse = " ")) # returns words that match tags separated by a space as a string
+  })
+}
+
+EvaluateKs = function(textVec, sampleIndices, ks = 2:20){
+  
+  dtm = GetDtm(textVec)
+  dtm_train = dtm[sampleIndices,]
+  dtm_test = dtm[-sampleIndices,]
+  
+  dtmDgc = GetDtm(textVec, T)
+  dtmDgc_train = dtmDgc[sampleIndices,]
+  dtmDgc_test = dtmDgc[-sampleIndices,]
+  
+  #dtm_train = GetDtm(trainSet)
+  #dtm_test = GetDtm(testSet)
+  #dtmDgc_train = GetDtm(trainSet, T)
+  #dtmDgc_test = GetDtm(testSet, T)
+  
+  
+  #1
+  modelList = tm_parLapply(ks, function(k){
+    m = textmineR::FitLdaModel(dtm = dtmDgc_train,
+                               k = k,
+                               iterations = 220,
+                               burnin = 180,
+                               #beta = colSums(reviewDtm_train) / sum(reviewDtm_train) * 100,
+                               optimize_alpha = T,
+                               cpus = 1)
+    m$k = k
+    return(m)
+  })
+  
+  coherence_matrix = data.frame(k = sapply(modelList, function(x) nrow(x$phi)),
+                                coherence = sapply(modelList, function(x) mean(x$coherence)))
+  
+  g1 = ggplot(coherence_matrix) +
+    geom_line(aes(x = k, y = coherence)) +
+    theme(axis.text.y = element_blank())
+  
+  #2
+  system.time({
+    metricsView = ldatuning::FindTopicsNumber(dtm_train, 
+                                            topics = ks, 
+                                            metrics = c("Griffiths2004", "CaoJuan2009", "Arun2010"),
+                                            control = list(seed = 12345),
+                                            verbose = F)
+  })
+  
+  metricsView_scaled = metricsView
+  for (i in 2:ncol(metricsView_scaled)){
+    minVal = min(metricsView_scaled[[i]])
+    maxDiff = max(metricsView_scaled[[i]]) - minVal
+    metricsView_scaled[[i]] = (metricsView_scaled[[i]]-minVal)/maxDiff
+  }
+  
+  g2 = ggplot(metricsView_scaled %>% gather(key = "metric", "value", -topics) %>% mutate(approach = ifelse(metric == "Griffiths2004", "Maximize", ".Minimize"))) +
+    geom_line(aes(x = topics, y = value, color = metric)) +
+    facet_wrap(vars(approach), ncol = 1) +
+    scale_x_continuous(n.breaks = 10)+
+    labs(x = "k")
+  #ldatuning::FindTopicsNumber_plot(reviewOpt) # above does the same as this, but needed to return the chart object to create the grob
+  
+  #3
+  perplexityDf = data.frame(train = numeric(), test = numeric())
+  burnin = 100
+  iter = 220
+  keep = 50
+  set.seed(12345)
+  
+  for (i in ks){
+    fitted = LDA(dtm_train, k = i, method = "Gibbs",
+                 control = list(burnin = burnin, iter = iter, keep = keep))
+    perplexityDf[i,1] = topicmodels::perplexity(fitted, newdata = dtm_train)
+    perplexityDf[i,2] = topicmodels::perplexity(fitted, newdata = dtm_test)
+  }
+  
+  g3 = ggplot(perplexityDf %>% mutate(Topics = row_number()) %>% gather(key = "set", value = "Perplexity", train, test), aes(x = as.numeric(row.names(perplexityDf)))) +
+    geom_line(aes(x = Topics, y = Perplexity, color = set)) +
+    theme(axis.text.y = element_blank())+
+    labs(x = "k")
+  #return(gridExtra::grid.arrange(g2, g1, g3, widths = c(7,9,1.5), layout_matrix = rbind(c(1,1,1),c(2,3,NA))))
+  return(list(g2, g1, g3))
+}
+
+```
+
+```{r Evaluation Functions, echo = F}
+PlotTopTerms = function(topics, title, n = 15){
+  topTerms = topics %>%
+    group_by(topic) %>%
+    top_n(n, beta) %>%
+    ungroup() %>%
+    arrange(topic, -beta)
+  topTerms %>% 
+    mutate(term = reorder(term, beta)) %>%
+    ggplot(aes(term, beta, fill = factor(topic))) +
+    geom_col(show.legend = F) +
+    facet_wrap(vars(topic), scales = "free") +
+    ggtitle(title) +
+    #theme_solarized_2(light = F) +
+    #scale_colour_solarized("blue") +
+    theme(axis.text.x = element_blank(), axis.ticks.x = element_blank()) +
+    coord_flip()
+}
+
+GetSampleOfTopic = function(txt, topics, topicIndex, minGamma = 0.4){
+  print(str(topics))
+  ind = apply(topics, 1, function(x){
+    (any(which(x == max(x)) %in% topicIndex)) & max(x) >= minGamma
+  })
+  cbind(data.frame(text = txt[ind]), as.data.frame(topics)[ind,])
+}
+```
+
+
+```{r}
+#### Amazon Reviews ####
+# reviewSample = sample(nrow(amazonReviewDf),nrow(amazonReviewDf)*0.8, replace = F)
+# 
+# 
+reviewsKPlots = EvaluateKs(amazonReviewDf$comments, reviewSample, ks = 2:20)
+gridExtra::grid.arrange(reviewsKPlots[[1]], reviewsKPlots[[2]], reviewsKPlots[[3]], widths = c(7,9,1.5), layout_matrix = rbind(c(1,1,1),c(2,3,NA)))
+```
+
+Based on the above we will likely choose a value for k between 8 and 12.
+
+```{r Reviews LDA}
+burnin = 100
+iter = 220
+keep = 50
+set.seed(12345)
+
+k = 8
+reviewDtm = GetDtm(amazonReviewDf$comments)
+reviewDtm_Train = reviewDtm[reviewSample,]
+reviewDtm_Test = reviewDtm[-reviewSample]
+
+reviewLda = LDA(reviewDtm_Train, k = k, method = "Gibbs",
+                control = list(burnin = burnin, iter = iter, keep = keep))
+reviewLda_topics = tidytext::tidy(reviewLda, matrix = "beta")
+
+# plot top terms
+PlotTopTerms(reviewLda_topics, "Topics from Amazon Reviews - Standard method", 8)
+
+# would like to see if topics align at all with product categories
+reviewTopics = posterior(reviewLda, reviewDtm)
+reviewTopicMatrix = apply(reviewTopics$topics, 1, function(x){
+  return(max(x))
+})
+hist(reviewTopicMatrix, breaks = 20) # shows the maximum gamma scores for any document (low scores for all likely means that the topics are not relevant)
+
+# could show if the products aligned with the topics (they don't in this instance)
+reviewTopicDf = data.frame(product = amazonReviewDf$product, topic = apply(reviewTopics$topics, 1, function(x){
+  if (max(x) >= 0.01) {
+    which(x == max(x))[1]
+  } else {
+    "Unknown"
+  }
+}))
+
+ggplot(reviewTopicDf) +
+  geom_bar(aes(x = product, fill = as.factor(topic))) + # need to go back and adjust this color palette
+  coord_flip()
+```
+
+```{r Amazon Reviews - POS}
+reviewPosText = as.character(FilterTextByPos(amazonReviewDf$comments))
+
+reviewPosKPlots = EvaluateKs(reviewPosText, reviewSample, ks = 2:20)
+gridExtra::grid.arrange(reviewPosKPlots[[1]], reviewPosKPlots[[2]], reviewPosKPlots[[3]], widths = c(7,9,1.5), layout_matrix = rbind(c(1,1,1),c(2,3,NA)))
+```
+
+Will attempt k == 7 for this POS limited set of documents.
+
+```{r Amazon Reviews POS}
+burnin = 100
+iter = 220
+keep = 50
+set.seed(12345)
+
+k = 7
+reviewDtm_Pos = GetDtm(reviewPosText)
+reviewDtm_Pos_Train = reviewDtm_Pos[reviewSample,]
+reviewDtm_Pos_Test = reviewDtm_Pos[-reviewSample]
+
+reviewLda_Pos = LDA(reviewDtm_Pos_Train, k = k, method = "Gibbs",
+                control = list(burnin = burnin, iter = iter, keep = keep))
+reviewLda_Pos_topics = tidytext::tidy(reviewLda_Pos, matrix = "beta")
+
+# plot top terms
+PlotTopTerms(reviewLda_Pos_topics, "Topics from Amazon Reviews - Limited by POS", 8)
+
+# would like to see if topics align at all with product categories
+reviewTopics_Pos = posterior(reviewLda_Pos, reviewDtm)
+reviewTopicMatrix_Pos = apply(reviewTopics_Pos$topics, 1, function(x){
+  return(max(x))
+})
+hist(reviewTopicMatrix_Pos, breaks = 20) # shows the maximum gamma scores for any document (low scores for all likely means that the topics are not relevant)
+
+# could show if the products aligned with the topics (they don't in this instance)
+reviewTopicDf_Pos = data.frame(product = amazonReviewDf$product, topic = apply(reviewTopics_Pos$topics, 1, function(x){
+  if (max(x) >= 0.01) {
+    which(x == max(x))[1]
+  } else {
+    "Unknown"
+  }
+}))
+
+ggplot(reviewTopicDf_Pos) +
+  geom_bar(aes(x = product, fill = as.factor(topic))) + # need to go back and adjust this color palette
+  coord_flip()
+# Can show sample data from a topic, for the most part there are no clear winners with this data. POS makes this too sparse (plus the standard model didn't perform well. This method appeared to make the terms more interpretable, but made the matrix too sparse. Perhaps a Phrasal approach would be better for smaller data such as this? The Pos might still perform with the large text from the papers below.)
+# View(GetSampleOfTopic(amazonReviewDf$comments, reviewTopics_Pos$topics, 5, minGamma = 0.1))
+```
+
+
+```{r}
+# #### NIPS Publications ####
+# papersSample_full = sample(nrow(nipsPapersDf), 1000, replace = F)
+# papersSampleDf = nipsPapersDf[papersSample_full,]
+# papersSample = sample(nrow(papersSampleDf),nrow(papersSampleDf)*0.8, replace = F)
+# papersSample = sample(nrow(papersSampleDf), 500, replace = F)
+# papersTrain = papersSampleDf$paper_text[papersSample]
+# papersTest = papersSampleDf$paper_text[-papersSample]
+# 
+# time = Sys.time()
+# papersKPlots = EvaluateKs(papersSampleDf$paper_text, papersSample)
+# difftime(time, Sys.time())
+gridExtra::grid.arrange(papersKPlots[[1]], papersKPlots[[2]], papersKPlots[[3]], widths = c(7,9,1.5), layout_matrix = rbind(c(1,1,1),c(2,3,NA)))
+```
+
+Based on above will attempt K == 11 for the NIPS papers
+
+```{r NIPS Papers LDA}
+burnin = 100
+iter = 220
+keep = 50
+set.seed(12345)
+
+k = 11
+papersDtm = GetDtm(papersSampleDf$paper_text)
+papersDtm_Train = papersDtm[papersSample,]
+papersDtm_Test = papersDtm[-papersSample,]
+
+papersLda = LDA(papersDtm_Train, k = k, method = "Gibbs",
+                control = list(burnin = burnin, iter = iter, keep = keep))
+papersLda_topics = tidytext::tidy(papersLda, matrix = "beta")
+
+PlotTopTerms(papersLda_topics, "NIPS Publications Top Terms - Standard Method")
+
+# would like to see if topics align at all with product categories
+papersTopics = posterior(papersLda, papersDtm)
+papersTopicMatrix = apply(papersTopics$topics, 1, function(x){
+  return(max(x))
+})
+hist(papersTopicMatrix, breaks = 20) # shows the maximum gamma scores for any document (low scores for all likely means that the topics are not relevant)
+
+```
+
+```{r NIPS Papers Pos Ks}
+papersPosText = as.character(FilterTextByPos(papersSampleDf$paper_text))
+
+papersPosKPlots = EvaluateKs(papersPosText, papersSample, ks = 2:20)
+gridExtra::grid.arrange(papersPosKPlots[[1]], papersPosKPlots[[2]], papersPosKPlots[[3]], widths = c(7,9,1.5), layout_matrix = rbind(c(1,1,1),c(2,3,NA)))
+```
+
+Seeing above, lets attempt K = 16
+
+```{r NIPS Papers Pos}
+burnin = 100
+iter = 220
+keep = 50
+set.seed(12345)
+
+k = 16
+papersDtm_Pos = GetDtm(papersPosText)
+papersDtm_Pos_Train = papersDtm_Pos[papersSample,]
+papersDtm_Pos_Test = papersDtm_Pos[-papersSample,]
+
+papersLda_Pos = LDA(papersDtm_Pos_Train, k = k, method = "Gibbs",
+                control = list(burnin = burnin, iter = iter, keep = keep))
+papersLda_Pos_topics = tidytext::tidy(papersLda_Pos, matrix = "beta")
+
+PlotTopTerms(papersLda_Pos_topics, "NIPS Publications Top Terms - Standard Method", 8)
+
+# would like to see if topics align at all with product categories
+papersTopics_Pos = posterior(papersLda_Pos, papersDtm_Pos)
+papersTopicMatrix_Pos = apply(papersTopics_Pos$topics, 1, function(x){
+  return(max(x))
+})
+hist(papersTopicMatrix_Pos, breaks = 20) # shows the maximum gamma scores for any document (low scores for all likely means that the topics are not relevant)
+
+# view of 
+```
+
