@@ -31,6 +31,35 @@ library(topicmodels)
 # set file locations
 nipsPapersFile = "~/Github/Linguistic-Feature-Limiting-in-Topic-Modelling/Data/papers.rds"
 amazonReviewFile = "~/Github/Linguistic-Feature-Limiting-in-Topic-Modelling/Data/amazonReviews.rds"
+
+#### tmp ####
+reviewSampleFile = "~/Github/Linguistic-Feature-Limiting-in-Topic-Modelling/tmp/reviewSample.rds"
+papersSampleFile = "~/Github/Linguistic-Feature-Limiting-in-Topic-Modelling/tmp/papersSample.rds"
+papersSampleFullFile = "~/Github/Linguistic-Feature-Limiting-in-Topic-Modelling/tmp/papersSampleFull.rds"
+reviewsKsFile = "~/Github/Linguistic-Feature-Limiting-in-Topic-Modelling/tmp/reviewsKs.rds"
+reviewsKsPosFile = "~/Github/Linguistic-Feature-Limiting-in-Topic-Modelling/tmp/reviewsKsPos.rds"
+papersKsFile = "~/Github/Linguistic-Feature-Limiting-in-Topic-Modelling/tmp/papersKs.rds"
+papersKsPosFile = "~/Github/Linguistic-Feature-Limiting-in-Topic-Modelling/tmp/papersKsPos.rds"
+papersLdaFile = "~/Github/Linguistic-Feature-Limiting-in-Topic-Modelling/tmp/papersLda.rds"
+papersPosLdaFile = "~/Github/Linguistic-Feature-Limiting-in-Topic-Modelling/tmp/papersPosLda.rds"
+papersTopicsFile = "~/Github/Linguistic-Feature-Limiting-in-Topic-Modelling/tmp/papersTopics.rds"
+papersTopicsPosFile = "~/Github/Linguistic-Feature-Limiting-in-Topic-Modelling/tmp/papersTopicsPos.rds"
+papersPosTextFile = "~/Github/Linguistic-Feature-Limiting-in-Topic-Modelling/tmp/papersPosText.rds"
+
+reviewSample = readRDS(reviewSampleFile)
+papersSample = readRDS(papersSampleFile)
+papersSample_full = readRDS(papersSampleFullFile)
+reviewsKPlots = readRDS(reviewsKsFile)
+reviewPosKPlots = readRDS(reviewsKsPosFile)
+papersKPlots = readRDS(papersKsFile)
+papersPosKPlots = readRDS(papersKsPosFile)
+papersLda = readRDS(papersLdaFile)
+papersLda_Pos = readRDS(papersPosLdaFile)
+papersTopics = readRDS(papersTopicsFile)
+papersTopics_Pos = readRDS(papersTopicsPosFile)
+papersPosText = readRDS(papersPosTextFile)
+
+options(warn = -1)
 ```
 
 ```{r import data, echo = F}
@@ -44,10 +73,18 @@ amazonReviewDf = amazonReviewDf %>%
 #### NIPS publications ####
 
 nipsPapersDf = readRDS(nipsPapersFile)
-nipsPapersDf = nipsPapersDf %>% 
+nipsPapersDf = nipsPapersDf %>%
   mutate(id = row_number()) %>%
   select(id, title, paper_text)
 ```
+
+
+Itro to POS tagging as well as reference for POS tag codes: <https://m-clark.github.io/text-analysis-with-R/part-of-speech-tagging.html>
+
+
+A simple introduction to topic modelling: <https://www.tidytextmining.com/topicmodeling.html>
+
+
 
 ```{r linguistic tagging functions, echo = F}
 
@@ -88,7 +125,7 @@ sents = lapply(1:length(start), function(i){
 
 ```
 
-```{r Traditional Prep}
+```{r Traditional Prep Fx, echo = F}
 
 GetDtm = function(x, textMineRVersion = F){
   txt = as.vector(x)
@@ -225,7 +262,6 @@ PlotTopTerms = function(topics, title, n = 15){
 }
 
 GetSampleOfTopic = function(txt, topics, topicIndex, minGamma = 0.4){
-  print(str(topics))
   ind = apply(topics, 1, function(x){
     (any(which(x == max(x)) %in% topicIndex)) & max(x) >= minGamma
   })
@@ -233,19 +269,24 @@ GetSampleOfTopic = function(txt, topics, topicIndex, minGamma = 0.4){
 }
 ```
 
+## Amazon Reviews
 
-```{r}
+### K evaluation using standard data prep methods
+
+```{r Amazon Reviews Ks, echo = F}
 #### Amazon Reviews ####
 # reviewSample = sample(nrow(amazonReviewDf),nrow(amazonReviewDf)*0.8, replace = F)
 # 
 # 
-reviewsKPlots = EvaluateKs(amazonReviewDf$comments, reviewSample, ks = 2:20)
+# reviewsKPlots = EvaluateKs(amazonReviewDf$comments, reviewSample, ks = 2:20)
 gridExtra::grid.arrange(reviewsKPlots[[1]], reviewsKPlots[[2]], reviewsKPlots[[3]], widths = c(7,9,1.5), layout_matrix = rbind(c(1,1,1),c(2,3,NA)))
 ```
 
 Based on the above we will likely choose a value for k between 8 and 12.
 
-```{r Reviews LDA}
+### Model evaluation - Standard Method
+
+```{r Reviews LDA, echo = F}
 burnin = 100
 iter = 220
 keep = 50
@@ -268,7 +309,7 @@ reviewTopics = posterior(reviewLda, reviewDtm)
 reviewTopicMatrix = apply(reviewTopics$topics, 1, function(x){
   return(max(x))
 })
-hist(reviewTopicMatrix, breaks = 20) # shows the maximum gamma scores for any document (low scores for all likely means that the topics are not relevant)
+hist(reviewTopicMatrix, breaks = 20) # shows the maximum gamma scores for any document (low scores for all likely means that the topics are not distinguishable)
 
 # could show if the products aligned with the topics (they don't in this instance)
 reviewTopicDf = data.frame(product = amazonReviewDf$product, topic = apply(reviewTopics$topics, 1, function(x){
@@ -284,22 +325,24 @@ ggplot(reviewTopicDf) +
   coord_flip()
 ```
 
+### K Evaluation using POS data prep method
+
 ```{r Amazon Reviews - POS}
 reviewPosText = as.character(FilterTextByPos(amazonReviewDf$comments))
-
-reviewPosKPlots = EvaluateKs(reviewPosText, reviewSample, ks = 2:20)
+# 
+# reviewPosKPlots = EvaluateKs(reviewPosText, reviewSample, ks = 2:20)
 gridExtra::grid.arrange(reviewPosKPlots[[1]], reviewPosKPlots[[2]], reviewPosKPlots[[3]], widths = c(7,9,1.5), layout_matrix = rbind(c(1,1,1),c(2,3,NA)))
 ```
 
-Will attempt k == 7 for this POS limited set of documents.
+Will attempt k == 10 for this POS limited set of documents.
 
-```{r Amazon Reviews POS}
+```{r Amazon Reviews POS, echo = F}
 burnin = 100
 iter = 220
 keep = 50
 set.seed(12345)
 
-k = 7
+k =10
 reviewDtm_Pos = GetDtm(reviewPosText)
 reviewDtm_Pos_Train = reviewDtm_Pos[reviewSample,]
 reviewDtm_Pos_Test = reviewDtm_Pos[-reviewSample]
@@ -334,15 +377,18 @@ ggplot(reviewTopicDf_Pos) +
 # View(GetSampleOfTopic(amazonReviewDf$comments, reviewTopics_Pos$topics, 5, minGamma = 0.1))
 ```
 
+## NIPS Publications
 
-```{r}
+### K Evaluation using standard data prep methods
+
+```{r NIPS publications Ks, echo = F}
 # #### NIPS Publications ####
-# papersSample_full = sample(nrow(nipsPapersDf), 1000, replace = F)
-# papersSampleDf = nipsPapersDf[papersSample_full,]
-# papersSample = sample(nrow(papersSampleDf),nrow(papersSampleDf)*0.8, replace = F)
-# papersSample = sample(nrow(papersSampleDf), 500, replace = F)
-# papersTrain = papersSampleDf$paper_text[papersSample]
-# papersTest = papersSampleDf$paper_text[-papersSample]
+papersSample_full = sample(nrow(nipsPapersDf), 1000, replace = F)
+papersSampleDf = nipsPapersDf[papersSample_full,]
+papersSample = sample(nrow(papersSampleDf),nrow(papersSampleDf)*0.8, replace = F)
+papersSample = sample(nrow(papersSampleDf), 500, replace = F)
+papersTrain = papersSampleDf$paper_text[papersSample]
+papersTest = papersSampleDf$paper_text[-papersSample]
 # 
 # time = Sys.time()
 # papersKPlots = EvaluateKs(papersSampleDf$paper_text, papersSample)
@@ -352,6 +398,8 @@ gridExtra::grid.arrange(papersKPlots[[1]], papersKPlots[[2]], papersKPlots[[3]],
 
 Based on above will attempt K == 11 for the NIPS papers
 
+### Model Evaluation using standard data prep methods
+
 ```{r NIPS Papers LDA}
 burnin = 100
 iter = 220
@@ -359,18 +407,18 @@ keep = 50
 set.seed(12345)
 
 k = 11
-papersDtm = GetDtm(papersSampleDf$paper_text)
-papersDtm_Train = papersDtm[papersSample,]
-papersDtm_Test = papersDtm[-papersSample,]
+# papersDtm = GetDtm(papersSampleDf$paper_text)
+# papersDtm_Train = papersDtm[papersSample,]
+# papersDtm_Test = papersDtm[-papersSample,]
 
-papersLda = LDA(papersDtm_Train, k = k, method = "Gibbs",
-                control = list(burnin = burnin, iter = iter, keep = keep))
+# papersLda = LDA(papersDtm_Train, k = k, method = "Gibbs",
+#                 control = list(burnin = burnin, iter = iter, keep = keep))
 papersLda_topics = tidytext::tidy(papersLda, matrix = "beta")
 
-PlotTopTerms(papersLda_topics, "NIPS Publications Top Terms - Standard Method")
+PlotTopTerms(papersLda_topics, "NIPS Publications Top Terms - Standard Method", 8)
 
 # would like to see if topics align at all with product categories
-papersTopics = posterior(papersLda, papersDtm)
+# papersTopics = posterior(papersLda, papersDtm)
 papersTopicMatrix = apply(papersTopics$topics, 1, function(x){
   return(max(x))
 })
@@ -378,14 +426,18 @@ hist(papersTopicMatrix, breaks = 20) # shows the maximum gamma scores for any do
 
 ```
 
-```{r NIPS Papers Pos Ks}
-papersPosText = as.character(FilterTextByPos(papersSampleDf$paper_text))
+### K Evaluation using POS data prep method
 
-papersPosKPlots = EvaluateKs(papersPosText, papersSample, ks = 2:20)
+```{r NIPS Papers Pos Ks}
+# papersPosText = as.character(FilterTextByPos(papersSampleDf$paper_text))
+# 
+# papersPosKPlots = EvaluateKs(papersPosText, papersSample, ks = 2:20)
 gridExtra::grid.arrange(papersPosKPlots[[1]], papersPosKPlots[[2]], papersPosKPlots[[3]], widths = c(7,9,1.5), layout_matrix = rbind(c(1,1,1),c(2,3,NA)))
 ```
 
 Seeing above, lets attempt K = 16
+
+### Model Evaluation using POS data prep method
 
 ```{r NIPS Papers Pos}
 burnin = 100
@@ -394,23 +446,34 @@ keep = 50
 set.seed(12345)
 
 k = 16
-papersDtm_Pos = GetDtm(papersPosText)
-papersDtm_Pos_Train = papersDtm_Pos[papersSample,]
-papersDtm_Pos_Test = papersDtm_Pos[-papersSample,]
+# papersDtm_Pos = GetDtm(papersPosText)
+# papersDtm_Pos_Train = papersDtm_Pos[papersSample,]
+# papersDtm_Pos_Test = papersDtm_Pos[-papersSample,]
 
-papersLda_Pos = LDA(papersDtm_Pos_Train, k = k, method = "Gibbs",
-                control = list(burnin = burnin, iter = iter, keep = keep))
+# papersLda_Pos = LDA(papersDtm_Pos_Train, k = k, method = "Gibbs",
+#                 control = list(burnin = burnin, iter = iter, keep = keep))
 papersLda_Pos_topics = tidytext::tidy(papersLda_Pos, matrix = "beta")
 
 PlotTopTerms(papersLda_Pos_topics, "NIPS Publications Top Terms - Standard Method", 8)
 
 # would like to see if topics align at all with product categories
-papersTopics_Pos = posterior(papersLda_Pos, papersDtm_Pos)
+# papersTopics_Pos = posterior(papersLda_Pos, papersDtm_Pos)
 papersTopicMatrix_Pos = apply(papersTopics_Pos$topics, 1, function(x){
   return(max(x))
 })
 hist(papersTopicMatrix_Pos, breaks = 20) # shows the maximum gamma scores for any document (low scores for all likely means that the topics are not relevant)
 
-# view of 
+
+# view of titles by topic
+tmp = data.frame(lapply(1:6, function(i){
+  sampleDf = GetSampleOfTopic(papersSampleDf$paper_text, topics = papersTopics_Pos$topics, topicIndex = i, minGamma = 0.02) %>%
+    select(text) %>%
+    head(6) %>%
+    mutate(text = substr(text, 1, 500))
+  sampleText = sampleDf$text
+  return(c(sampleText, rep(NA, times = length(sampleText)-6)))
+}))
+colnames(tmp) = 1:ncol(tmp)
+tmp
 ```
 
