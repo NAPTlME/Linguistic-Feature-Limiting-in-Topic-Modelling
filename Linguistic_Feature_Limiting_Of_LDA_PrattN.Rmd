@@ -26,6 +26,19 @@ library(openNLP)
 library(stringr)
 library(topicmodels)
 
+# set up text wrapping for outputs
+library(knitr)
+hook_output = knit_hooks$get('source')  #this is the output for code
+
+knit_hooks$set(source = function(x, options) {
+  # use if the output is PDF and you set an option linewidth to e.g. 70
+  # in the chunk options
+  if (!is.null(n <- options$linewidth) & knitr::is_latex_output()) {
+    x <- strwrap(x, width = n, exdent = 4)
+  }
+  hook_output(x, options)
+})
+
 
 
 # set file locations
@@ -117,6 +130,27 @@ sents = lapply(1:length(start), function(i){
   return(tmp[start[i]:end[i],])
 })
 
+wrapText = function(x, maxLen = 82){
+  wrappedText = character()
+  while (nchar(x) > maxLen){
+    # find last space
+    spaceLocations = str_locate_all(x, "\\s+")[[1]]
+    # filter out spaces after the max len
+    spaceLocations = spaceLocations[spaceLocations[,1] <= maxLen,]
+    lastSpaceStart = spaceLocations[nrow(spaceLocations), 1]
+    lastSpaceEnd = spaceLocations[nrow(spaceLocations), 2]
+    wrappedText = c(wrappedText, substr(x, 1, lastSpaceStart-1))
+    if (lastSpaceEnd < nchar(x)){
+      x = substr(x, lastSpaceEnd +1, nchar(x))
+    } else {
+      x = ""
+    }
+  }
+  if (nchar(x) > 0){
+    wrappedText = c(wrappedText, x)
+  }
+  return(paste0(wrappedText, collapse = "\n"))
+}
 
 ```
 
@@ -248,7 +282,7 @@ A simple introduction to topic modelling: <https://www.tidytextmining.com/topicm
 Sample of Amazon Review Text
 
 ```{r Amazon Review Text Sample}
-amazonReviewDf$comments[1]
+cat(wrapText(amazonReviewDf$comments[1]))
 ```
 
 Text appearance after traditional data prep techniques
@@ -263,14 +297,14 @@ corp = tm_map(corp, stripWhitespace)
 corp = tm_map(corp, textstem::lemmatize_strings)
 
 # convert back to a string
-corp[[1]]$content
+cat(wrapText(corp[[1]]$content))
 ```
 
 Text appearance after POS filtering (Nouns and Adj)
 
 ```{r}
-sampleText = getPos(amazonReviewDf$comments[1], sent_token_annotator, word_token_annotator, posAnnotator)
-sampleText
+sampleText = as.character(FilterTextByPos(amazonReviewDf$comments[1]))
+cat(wrapText(sampleText))
 ```
 
 And after then going through the traditional prep steps
@@ -285,8 +319,15 @@ corp = tm_map(corp, stripWhitespace)
 corp = tm_map(corp, textstem::lemmatize_strings)
 
 # convert back to a string
-corp[[1]]$content
+cat(wrapText(corp[[1]]$content))
 ```
+
+For reference a sample of the first 500 characters of one of the NIPS papers used in the second part.
+
+```{r}
+cat(wrapText(substr(nipsPapersDf$paper_text[4130], 1, 500)))
+```
+
 
 \pagebreak
 
@@ -360,17 +401,17 @@ reviewTopicMatrix = apply(reviewTopics$topics, 1, function(x){
 hist(reviewTopicMatrix, breaks = 20) # shows the maximum gamma scores for any document (low scores for all likely means that the topics are not distinguishable)
 
 # could show if the products aligned with the topics (they don't in this instance)
-reviewTopicDf = data.frame(product = amazonReviewDf$product, topic = apply(reviewTopics$topics, 1, function(x){
-  if (max(x) >= 0.01) {
-    which(x == max(x))[1]
-  } else {
-    "Unknown"
-  }
-}))
-
-ggplot(reviewTopicDf) +
-  geom_bar(aes(x = product, fill = as.factor(topic))) + # need to go back and adjust this color palette
-  coord_flip()
+# reviewTopicDf = data.frame(product = amazonReviewDf$product, topic = apply(reviewTopics$topics, 1, function(x){
+#   if (max(x) >= 0.01) {
+#     which(x == max(x))[1]
+#   } else {
+#     "Unknown"
+#   }
+# }))
+# 
+# ggplot(reviewTopicDf) +
+#   geom_bar(aes(x = product, fill = as.factor(topic))) + # need to go back and adjust this color palette
+#   coord_flip()
 ```
 
 ### K Evaluation using POS data prep method
@@ -410,17 +451,17 @@ reviewTopicMatrix_Pos = apply(reviewTopics_Pos$topics, 1, function(x){
 hist(reviewTopicMatrix_Pos, breaks = 20) # shows the maximum gamma scores for any document (low scores for all likely means that the topics are not relevant)
 
 # could show if the products aligned with the topics (they don't in this instance)
-reviewTopicDf_Pos = data.frame(product = amazonReviewDf$product, topic = apply(reviewTopics_Pos$topics, 1, function(x){
-  if (max(x) >= 0.01) {
-    which(x == max(x))[1]
-  } else {
-    "Unknown"
-  }
-}))
-
-ggplot(reviewTopicDf_Pos) +
-  geom_bar(aes(x = product, fill = as.factor(topic))) + # need to go back and adjust this color palette
-  coord_flip()
+# reviewTopicDf_Pos = data.frame(product = amazonReviewDf$product, topic = apply(reviewTopics_Pos$topics, 1, function(x){
+#   if (max(x) >= 0.01) {
+#     which(x == max(x))[1]
+#   } else {
+#     "Unknown"
+#   }
+# }))
+# 
+# ggplot(reviewTopicDf_Pos) +
+#   geom_bar(aes(x = product, fill = as.factor(topic))) + # need to go back and adjust this color palette
+#   coord_flip()
 # Can show sample data from a topic, for the most part there are no clear winners with this data. POS makes this too sparse (plus the standard model didn't perform well. This method appeared to make the terms more interpretable, but made the matrix too sparse. Perhaps a Phrasal approach would be better for smaller data such as this? The Pos might still perform with the large text from the papers below.)
 # View(GetSampleOfTopic(amazonReviewDf$comments, reviewTopics_Pos$topics, 5, minGamma = 0.1))
 ```
@@ -448,7 +489,7 @@ Based on above will attempt K == 11 for the NIPS papers
 
 ### Model Evaluation using standard data prep methods
 
-```{r NIPS Papers LDA}
+```{r NIPS Papers LDA, echo = F}
 burnin = 100
 iter = 220
 keep = 50
@@ -476,7 +517,7 @@ hist(papersTopicMatrix, breaks = 20) # shows the maximum gamma scores for any do
 
 ### K Evaluation using POS data prep method
 
-```{r NIPS Papers Pos Ks}
+```{r NIPS Papers Pos Ks, echo = F}
 # papersPosText = as.character(FilterTextByPos(papersSampleDf$paper_text))
 # 
 # papersPosKPlots = EvaluateKs(papersPosText, papersSample, ks = 2:20)
@@ -487,7 +528,7 @@ Seeing above, lets attempt K = 16
 
 ### Model Evaluation using POS data prep method
 
-```{r NIPS Papers Pos}
+```{r NIPS Papers Pos, echo = F}
 burnin = 100
 iter = 220
 keep = 50
@@ -513,3 +554,13 @@ hist(papersTopicMatrix_Pos, breaks = 20) # shows the maximum gamma scores for an
 
 ```
 
+\pagebreak
+
+## Next Steps:
+
+1. Simple tree structure (from recursive function) to select text, not by POS, but by phrasal structure. 
+
+2. Implement n-gram model (on standard version as well for comparison) to get bi/tri-grams within the phrases 
+_This will reduce the noise added by traditional approaches that concat all text into ngrams_
+
+3. Evaluate a larger set of the NIPS publications by extracting the Abstract of the papers and evaluating only the abstract.
