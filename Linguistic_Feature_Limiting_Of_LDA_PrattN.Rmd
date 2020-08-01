@@ -79,12 +79,7 @@ nipsPapersDf = nipsPapersDf %>%
 ```
 
 
-Itro to POS tagging as well as reference for POS tag codes: <https://m-clark.github.io/text-analysis-with-R/part-of-speech-tagging.html>
-
-
-A simple introduction to topic modelling: <https://www.tidytextmining.com/topicmodeling.html>
-
-
+\pagebreak
 
 ```{r linguistic tagging functions, echo = F}
 
@@ -242,6 +237,59 @@ EvaluateKs = function(textVec, sampleIndices, ks = 2:20){
 
 ```
 
+## Online References and Intro
+
+
+Itro to POS tagging as well as reference for POS tag codes: <https://m-clark.github.io/text-analysis-with-R/part-of-speech-tagging.html>
+
+
+A simple introduction to topic modelling: <https://www.tidytextmining.com/topicmodeling.html>
+
+Sample of Amazon Review Text
+
+```{r Amazon Review Text Sample}
+amazonReviewDf$comments[1]
+```
+
+Text appearance after traditional data prep techniques
+
+```{r}
+corp = Corpus(VectorSource(amazonReviewDf$comments[1]))
+corp = tm_map(corp, removeNumbers)
+corp = tm_map(corp, function(y) removeWords(y,stopwords()))
+corp = tm_map(corp, tolower)
+corp = tm_map(corp, removePunctuation)
+corp = tm_map(corp, stripWhitespace)
+corp = tm_map(corp, textstem::lemmatize_strings)
+
+# convert back to a string
+corp[[1]]$content
+```
+
+Text appearance after POS filtering (Nouns and Adj)
+
+```{r}
+sampleText = getPos(amazonReviewDf$comments[1], sent_token_annotator, word_token_annotator, posAnnotator)
+sampleText
+```
+
+And after then going through the traditional prep steps
+
+```{r}
+corp = Corpus(VectorSource(sampleText))
+corp = tm_map(corp, removeNumbers)
+corp = tm_map(corp, function(y) removeWords(y,stopwords()))
+corp = tm_map(corp, tolower)
+corp = tm_map(corp, removePunctuation)
+corp = tm_map(corp, stripWhitespace)
+corp = tm_map(corp, textstem::lemmatize_strings)
+
+# convert back to a string
+corp[[1]]$content
+```
+
+\pagebreak
+
 ```{r Evaluation Functions, echo = F}
 PlotTopTerms = function(topics, title, n = 15){
   topTerms = topics %>%
@@ -327,7 +375,7 @@ ggplot(reviewTopicDf) +
 
 ### K Evaluation using POS data prep method
 
-```{r Amazon Reviews - POS}
+```{r Amazon Reviews - POS, echo = F}
 reviewPosText = as.character(FilterTextByPos(amazonReviewDf$comments))
 # 
 # reviewPosKPlots = EvaluateKs(reviewPosText, reviewSample, ks = 2:20)
@@ -463,17 +511,5 @@ papersTopicMatrix_Pos = apply(papersTopics_Pos$topics, 1, function(x){
 })
 hist(papersTopicMatrix_Pos, breaks = 20) # shows the maximum gamma scores for any document (low scores for all likely means that the topics are not relevant)
 
-
-# view of titles by topic
-tmp = data.frame(lapply(1:6, function(i){
-  sampleDf = GetSampleOfTopic(papersSampleDf$paper_text, topics = papersTopics_Pos$topics, topicIndex = i, minGamma = 0.02) %>%
-    select(text) %>%
-    head(6) %>%
-    mutate(text = substr(text, 1, 500))
-  sampleText = sampleDf$text
-  return(c(sampleText, rep(NA, times = length(sampleText)-6)))
-}))
-colnames(tmp) = 1:ncol(tmp)
-tmp
 ```
 
