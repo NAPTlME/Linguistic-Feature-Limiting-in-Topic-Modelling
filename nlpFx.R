@@ -40,6 +40,16 @@ GetTfIdf = function(dtm){
   t(t(tf) * idf)
 }
 
+innerClusterTfIdf = function(dtm, clust){
+  dtm = dtmAsMatrix(dtm)
+  # add all documents from a cluster together then perform tfidf
+  iDtm = t(sapply(unique(clust), function(x){
+    i = which(clust == x)
+    apply(dtm[i,,drop=F], 2, sum)
+  }))
+  GetTfIdf(iDtm)
+}
+
 sent_token_annotator = Maxent_Sent_Token_Annotator()
 word_token_annotator = Maxent_Word_Token_Annotator()
 posAnnotator = Maxent_POS_Tag_Annotator()
